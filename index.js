@@ -1,85 +1,74 @@
-const express = require('express');
-const cors = require('cors');
-
+// index.js
+const express = require("express");
+const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Allow all origins for now (you can restrict later)
 app.use(cors());
 app.use(express.json());
 
-// === Basic time helpers ===
-const DAY = 24 * 60 * 60 * 1000;
-
-// === IMPORTANT: Tie keys to a specific build of your script ===
-// Change this whenever you ship a new protected script build.
+// ---- CONFIG ----
+// இந்த SCRIPT_ID Userscript-ல இருக்கும் SCRIPT_ID உடன் ஒரே மாதிரியாக இருக்க வேண்டும்.
 const SCRIPT_ID = "FKBP-PRO-1.0";
 
-// === In-memory key store (demo). For production, move to DB or Render env. ===
-// durationDays: 30 => monthly. 36500 => lifetime.
+// உங்கள் keys இங்கே. (தேவைப்பட்டால் மேலும் சேர்க்கலாம்)
 const KEYS = {
-  // Monthly demo key (replace with your customer keys)
-  "FAARIZ-DEMO-1111-2222": {
-    scriptId: SCRIPT_ID,
-    issuedAt: "2025-08-15T00:00:00Z",
-    durationDays: 30,
-    owner: "demo-user"
-  },
-
-  // Lifetime owner key (for you)
+  // Lifetime (owner) – உங்களுக்கான master key
   "FAARIZ-LIFE-OWNER-0001": {
     scriptId: SCRIPT_ID,
-    issuedAt: "2025-01-01T00:00:00Z",
-    durationDays: 36500,
-    owner: "owner"
+    issuedAt: "2025-08-21T00:00:00Z",
+    durationDays: 36500,               // ~100 years
+    owner: "faariz-owner"
+  },
+
+  // 30 days demo key – customerக்கு sample
+  "FAARIZ-DEMO-1111-2222": {
+    scriptId: SCRIPT_ID,
+    issuedAt: "2025-08-21T00:00:00Z",
+    durationDays: 30,
+    owner: "demo-user"
   }
 };
+// ---- /CONFIG ----
 
-// Health
-app.get('/', (req, res) => {
-  res.send('FAARIZ License Server is running ✅');
-});
+// helpers
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Verify endpoint
-// Body: { key: "FAARIZ-XXXX-XXXX", scriptId: "FKBP-PRO-1.0" }
-app.post('/verify', (req, res) => {
-  const { key, scriptId } = req.body || {};
-  if (!key || !scriptId) {
-    return res.status(400).json({ ok: false, reason: "MISSING_FIELDS" });
-  }
+function checkKey(key, scriptId) {
+  if (!key || !scriptId) return { ok: false, reason: "MISSING" };
+  const rec = KEYS[key];
+  if (!rec) return { ok: false, reason: "INVALID" };
+  if (rec.scriptId !== scriptId) return { ok: false, reason: "WRONG_SCRIPT" };
 
-  const meta = KEYS[(key || '').trim()];
-  if (!meta) {
-    return res.json({ ok: false, reason: "KEY_NOT_FOUND" });
-  }
-
-  if (meta.scriptId !== scriptId) {
-    return res.json({ ok: false, reason: "WRONG_SCRIPT" });
-  }
-
-  const issued = new Date(meta.issuedAt).getTime();
-  if (!Number.isFinite(issued)) {
-    return res.json({ ok: false, reason: "BAD_ISSUED_AT" });
-  }
-
-  const expiresAt = issued + (meta.durationDays * DAY);
+  const issued = new Date(rec.issuedAt).getTime();
+  const expiry = issued + (rec.durationDays * DAY_MS);
   const now = Date.now();
-  const expired = now > expiresAt;
-  const daysLeft = Math.max(0, Math.ceil((expiresAt - now) / DAY));
+  const daysLeft = Math.max(0, Math.ceil((expiry - now) / DAY_MS));
+  const expired = now > expiry;
 
-  return res.json({
+  return {
     ok: !expired,
     reason: expired ? "EXPIRED" : "OK",
-    expiresAt,
     daysLeft,
-    owner: meta.owner || null,
-    scriptId: meta.scriptId
-  });
+    owner: rec.owner
+  };
+}
+
+// routes
+app.get("/", (_req, res) => {
+  res.type("text/plain").send("FAARIZ License Server is running ✅");
 });
 
-// 404 fallback
-app.use((req, res) => res.status(404).json({ ok: false, reason: "NOT_FOUND" }));
+app.post("/verify", (req, res) => {
+  try {
+    const { key, scriptId } = req.body || {};
+    const result = checkKey(String(key || "").trim(), String(scriptId || "").trim());
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, reason: "SERVER_ERROR", error: String(e && e.message) });
+  }
+});
 
 app.listen(PORT, () => {
-  console.log(`License server running on port ${PORT}`);
+  console.log(`License server listening on ${PORT}`);
 });
