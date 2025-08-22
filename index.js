@@ -1,74 +1,77 @@
-// index.js
+// index.js — FAARIZ License Server (Option 2 - full replace)
 const express = require("express");
-const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Basic JSON & CORS (no extra deps)
 app.use(express.json());
-
-// ---- CONFIG ----
-// இந்த SCRIPT_ID Userscript-ல இருக்கும் SCRIPT_ID உடன் ஒரே மாதிரியாக இருக்க வேண்டும்.
-const SCRIPT_ID = "FKBP-PRO-1.0";
-
-// உங்கள் keys இங்கே. (தேவைப்பட்டால் மேலும் சேர்க்கலாம்)
-const KEYS = {
-  // Lifetime (owner) – உங்களுக்கான master key
-  "FAARIZ-LIFE-OWNER-0001": {
-    scriptId: SCRIPT_ID,
-    issuedAt: "2025-08-21T00:00:00Z",
-    durationDays: 36500,               // ~100 years
-    owner: "faariz-owner"
-  },
-
-  // 30 days demo key – customerக்கு sample
-  "FAARIZ-DEMO-1111-2222": {
-    scriptId: SCRIPT_ID,
-    issuedAt: "2025-08-21T00:00:00Z",
-    durationDays: 30,
-    owner: "demo-user"
-  }
-};
-// ---- /CONFIG ----
-
-// helpers
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function checkKey(key, scriptId) {
-  if (!key || !scriptId) return { ok: false, reason: "MISSING" };
-  const rec = KEYS[key];
-  if (!rec) return { ok: false, reason: "INVALID" };
-  if (rec.scriptId !== scriptId) return { ok: false, reason: "WRONG_SCRIPT" };
-
-  const issued = new Date(rec.issuedAt).getTime();
-  const expiry = issued + (rec.durationDays * DAY_MS);
-  const now = Date.now();
-  const daysLeft = Math.max(0, Math.ceil((expiry - now) / DAY_MS));
-  const expired = now > expiry;
-
-  return {
-    ok: !expired,
-    reason: expired ? "EXPIRED" : "OK",
-    daysLeft,
-    owner: rec.owner
-  };
-}
-
-// routes
-app.get("/", (_req, res) => {
-  res.type("text/plain").send("FAARIZ License Server is running ✅");
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
 });
 
-app.post("/verify", (req, res) => {
-  try {
-    const { key, scriptId } = req.body || {};
-    const result = checkKey(String(key || "").trim(), String(scriptId || "").trim());
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ ok: false, reason: "SERVER_ERROR", error: String(e && e.message) });
+// ====== CONFIG: keys database (simple) ======
+// ஒவ்வொரு customer-க்கும் தனி key + எந்த scriptId-க்கு valid என map செய்யலாம்.
+// காலாவதி தேதியும் சேர்க்கலாம் (ISO date). தேவைக்கு ஏற்ப புதிய key-களை சேர்த்துக்கொள்ளலாம்.
+const KEYS = {
+  // EXAMPLE KEYS:
+  "FAARIZ-DEMO-1111-2222": {
+    scriptId: "FKBP-PRO-1.0",
+    expiresAt: "2099-12-31T23:59:59Z",
+    note: "Demo key for testing"
+  },
+  "FAARIZ-USER-ABCD-1234": {
+    scriptId: "FKBP-PRO-1.0",
+    expiresAt: "2026-01-01T00:00:00Z",
+    note: "Customer A"
   }
+};
+
+// Utility
+const isExpired = (iso) => {
+  if (!iso) return false; // expiry not set => never expire
+  return Date.now() > Date.parse(iso);
+};
+
+// Health
+app.get("/", (_req, res) => {
+  res.type("text").send("FAARIZ License Server is running ✅");
+});
+
+// Verify endpoint
+// Body: { key: "FAARIZ-XXXX-XXXX", scriptId: "FKBP-PRO-1.0" }
+app.post("/verify", (req, res) => {
+  const { key, scriptId } = req.body || {};
+  if (!key || !scriptId) {
+    return res.status(400).json({ ok: false, reason: "missing_fields" });
+  }
+
+  const rec = KEYS[String(key).trim()];
+  if (!rec) {
+    return res.json({ ok: false, reason: "invalid_key" });
+  }
+
+  if (rec.scriptId !== scriptId) {
+    return res.json({ ok: false, reason: "script_mismatch" });
+  }
+
+  if (isExpired(rec.expiresAt)) {
+    return res.json({ ok: false, reason: "expired" });
+  }
+
+  // success
+  const msLeft = rec.expiresAt ? Date.parse(rec.expiresAt) - Date.now() : null;
+  const daysLeft = msLeft != null ? Math.max(0, Math.ceil(msLeft / 86400000)) : null;
+  res.json({
+    ok: true,
+    scriptId: rec.scriptId,
+    expiresAt: rec.expiresAt || null,
+    daysLeft
+  });
 });
 
 app.listen(PORT, () => {
-  console.log(`License server listening on ${PORT}`);
+  console.log(`FAARIZ License Server on ${PORT}`);
 });
