@@ -1,77 +1,60 @@
-// index.js — FAARIZ License Server (Option 2 - full replace)
-const express = require("express");
+// index.js
+const express = require('express');
+const cors = require('cors');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Basic JSON & CORS (no extra deps)
+// SECRET: Render → Environment → add ADMIN_TOKEN
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'change-me';
+// Optional: comma separated origins, or * for all
+const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
+
+app.use(cors({ origin: ALLOW_ORIGIN === '*' ? true : ALLOW_ORIGIN.split(','), credentials: false }));
 app.use(express.json());
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
+
+// in-memory store (demo). Use DB for production.
+const store = new Map(); // key -> { scriptId, expiresAt, maxDevices, devices:Set }
+
+// simple health
+app.get('/', (_, res) => res.send('FAARIZ License Server is running ✅'));
+app.get('/health', (_, res) => res.json({ ok: true }));
+
+function adminOnly(req, res, next) {
+  if (req.get('x-admin-token') !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok: false, reason: 'unauthorized' });
+  }
   next();
+}
+
+// ISSUE a license
+app.post('/issue', adminOnly, (req, res) => {
+  const { key, scriptId, days = 30, maxDevices = 1 } = req.body || {};
+  if (!key || !scriptId) return res.status(400).json({ ok: false, reason: 'missing_fields' });
+  const expiresAt = Date.now() + Number(days) * 24 * 60 * 60 * 1000;
+  store.set(key, { scriptId, expiresAt, maxDevices: Number(maxDevices), devices: new Set() });
+  res.json({ ok: true, key, scriptId, expiresAt, maxDevices: Number(maxDevices) });
 });
 
-// ====== CONFIG: keys database (simple) ======
-// ஒவ்வொரு customer-க்கும் தனி key + எந்த scriptId-க்கு valid என map செய்யலாம்.
-// காலாவதி தேதியும் சேர்க்கலாம் (ISO date). தேவைக்கு ஏற்ப புதிய key-களை சேர்த்துக்கொள்ளலாம்.
-const KEYS = {
-  // EXAMPLE KEYS:
-  "FAARIZ-DEMO-1111-2222": {
-    scriptId: "FKBP-PRO-1.0",
-    expiresAt: "2099-12-31T23:59:59Z",
-    note: "Demo key for testing"
-  },
-  "FAARIZ-USER-ABCD-1234": {
-    scriptId: "FKBP-PRO-1.0",
-    expiresAt: "2026-01-01T00:00:00Z",
-    note: "Customer A"
+// VERIFY a license
+app.post('/verify', (req, res) => {
+  const { key, scriptId, fingerprint = 'default' } = req.body || {};
+  const lic = store.get(key);
+  if (!lic) return res.json({ ok: false, reason: 'invalid_key' });
+  if (lic.scriptId !== scriptId) return res.json({ ok: false, reason: 'wrong_script' });
+  if (Date.now() > lic.expiresAt) return res.json({ ok: false, reason: 'expired' });
+  if (!lic.devices.has(fingerprint) && lic.devices.size >= lic.maxDevices) {
+    return res.json({ ok: false, reason: 'device_limit' });
   }
-};
-
-// Utility
-const isExpired = (iso) => {
-  if (!iso) return false; // expiry not set => never expire
-  return Date.now() > Date.parse(iso);
-};
-
-// Health
-app.get("/", (_req, res) => {
-  res.type("text").send("FAARIZ License Server is running ✅");
+  lic.devices.add(fingerprint);
+  res.json({ ok: true, expiresAt: lic.expiresAt, leftMs: lic.expiresAt - Date.now(), devices: [...lic.devices] });
 });
 
-// Verify endpoint
-// Body: { key: "FAARIZ-XXXX-XXXX", scriptId: "FKBP-PRO-1.0" }
-app.post("/verify", (req, res) => {
-  const { key, scriptId } = req.body || {};
-  if (!key || !scriptId) {
-    return res.status(400).json({ ok: false, reason: "missing_fields" });
-  }
-
-  const rec = KEYS[String(key).trim()];
-  if (!rec) {
-    return res.json({ ok: false, reason: "invalid_key" });
-  }
-
-  if (rec.scriptId !== scriptId) {
-    return res.json({ ok: false, reason: "script_mismatch" });
-  }
-
-  if (isExpired(rec.expiresAt)) {
-    return res.json({ ok: false, reason: "expired" });
-  }
-
-  // success
-  const msLeft = rec.expiresAt ? Date.parse(rec.expiresAt) - Date.now() : null;
-  const daysLeft = msLeft != null ? Math.max(0, Math.ceil(msLeft / 86400000)) : null;
-  res.json({
-    ok: true,
-    scriptId: rec.scriptId,
-    expiresAt: rec.expiresAt || null,
-    daysLeft
-  });
+// REVOKE a license
+app.post('/revoke', adminOnly, (req, res) => {
+  const { key } = req.body || {};
+  store.delete(key);
+  res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`FAARIZ License Server on ${PORT}`);
-});
+app.listen(PORT, () => console.log(`License server listening on ${PORT}`));
