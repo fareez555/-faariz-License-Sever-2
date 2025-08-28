@@ -1,17 +1,13 @@
 {
-  "name": "faariz-license-server",
+  "name": "faariz-license-server-2",
   "version": "1.0.0",
-  "description": "Simple license verification server for FAARIZ KING BOT PRO",
   "main": "index.js",
-  "type": "commonjs",
+  "private": true,
   "scripts": {
     "start": "node index.js"
   },
-  "engines": {
-    "node": ">=18"
-  },
+  "engines": { "node": ">=18" },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.18.3"
+    "express": "^4.19.2"
   }
 }
